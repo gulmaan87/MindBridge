@@ -1,0 +1,64 @@
+# ==============================================================================
+# AI Cognitive Engagement & Memory Assistance Platform (MindBridge)
+# Local Development Infrastructure Orchestration (ADR-004, ADR-005, ADR-006, ADR-021)
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL 16 + pgvector (Semantic Memory & Relational Storage)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mindbridge_postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mindbridge_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mindbridge_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-mindbridge_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mindbridge_user} -d ${POSTGRES_DB:-mindbridge_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mindbridge_net
+
+  # ----------------------------------------------------------------------------
+  # Redis 7 (Caching, Rate Limiting & Ephemeral Session State)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: mindbridge_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - mindbridge_net
+
+# ------------------------------------------------------------------------------
+# Persistent Storage Volumes & Networks
+# ------------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    name: mindbridge_postgres_data
+  redis_data:
+    name: mindbridge_redis_data
+
+networks:
+  mindbridge_net:
+    name: mindbridge_network
+    driver: bridge

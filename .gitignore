@@ -1,0 +1,106 @@
+# ==============================================================================
+# AI Cognitive Engagement & Memory Assistance Platform (MindBridge)
+# Root Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Environment & Secrets (Mandatory Security Gate - Engineering Rules §3)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+secrets.json
+
+# ------------------------------------------------------------------------------
+# Python & Backend Artifacts
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python Testing & Tooling Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+
+# ------------------------------------------------------------------------------
+# Node.js & Frontend Artifacts (Next.js)
+# ------------------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Next.js Build Outputs
+.next/
+out/
+
+# Turbo & Tooling Caches
+.turbo/
+
+# ------------------------------------------------------------------------------
+# Local Persistence & Docker Data Volumes
+# ------------------------------------------------------------------------------
+postgres_data/
+redis_data/
+local_storage/
+media_uploads/
+
+# ------------------------------------------------------------------------------
+# Operating System & IDE Files
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# Specifications & Documentation (Local Only)
+# ------------------------------------------------------------------------------
+docs/
