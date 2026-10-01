@@ -13,6 +13,12 @@ dependencies = [
     "uvicorn[standard]>=0.28.0",
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
+    "sqlalchemy[asyncio]>=2.0.28",
+    "greenlet>=3.0.0",
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.9",
+    "alembic>=1.13.1",
+    "pgvector>=0.2.5",
 ]
 
 [project.optional-dependencies]

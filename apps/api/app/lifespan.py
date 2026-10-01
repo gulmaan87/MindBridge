@@ -26,8 +26,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.debug,
     )
 
-    # Startup tasks (connection pool pre-warming will attach here in Day 4)
+    # Startup tasks (connection pool pre-warming attaches here)
     yield
 
     # Shutdown tasks (graceful connection draining)
     logger.info("Shutting down %s gracefully", settings.app_name)
+    from app.db.session import close_db_connection
+
+    await close_db_connection()

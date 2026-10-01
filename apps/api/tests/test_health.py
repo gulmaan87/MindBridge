@@ -1,7 +1,8 @@
 """Tests for Health, Liveness, and Readiness endpoints (API Contract v2 §84)."""
 
-from app.main import app
 from fastapi.testclient import TestClient
+
+from app.main import app
 
 client = TestClient(app)
 

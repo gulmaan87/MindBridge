@@ -64,7 +64,9 @@ async def correlation_id_middleware(request: Request, call_next: Callable) -> Re
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch unhandled exceptions and return safe standard error envelope."""
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.error("Unhandled exception for request %s: %s", request_id, str(exc), exc_info=True)
+    logger.error(
+        "Unhandled exception for request %s: %s", request_id, str(exc), exc_info=True
+    )
 
     return JSONResponse(
         status_code=500,
