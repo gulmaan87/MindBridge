@@ -1,7 +1,33 @@
 import Link from "next/link";
+import { fetchReadiness } from "@/lib/api-client";
 import { Activity, Brain, ShieldCheck, HeartHandshake, Sparkles } from "lucide-react";
 
-export default function HomePage() {
+// ─── Backend Connectivity Check (Server Component) ────────────────────────
+// Runs server-side only; the internal API URL is never sent to the browser.
+async function BackendStatus() {
+  const result = await fetchReadiness();
+
+  const isOnline = result.ok && result.data.status === "ready";
+  const label = isOnline ? "Backend Connected" : "Backend Unreachable";
+  const dotColor = isOnline ? "bg-emerald-500" : "bg-amber-500";
+  const checks = result.ok ? result.data.checks : {};
+
+  return (
+    <div className="mt-4 inline-flex flex-col items-center gap-2">
+      <span className={`flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground`}>
+        <span className={`h-2 w-2 rounded-full ${dotColor} animate-pulse`} />
+        {label}
+      </span>
+      {isOnline && Object.keys(checks).length > 0 && (
+        <span className="text-xs text-muted-foreground">
+          {Object.entries(checks).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+export default async function HomePage() {
   return (
     <div className="flex min-h-screen flex-col">
       {/* Header */}
@@ -50,6 +76,9 @@ export default function HomePage() {
           <div className="mt-6 rounded-xl border border-border/80 bg-secondary/50 p-3.5 text-xs text-muted-foreground">
             <strong>Positioning Notice:</strong> MindBridge provides cognitive engagement and personalized memory assistance. It does not provide clinical diagnosis or automated medical treatment recommendations.
           </div>
+
+          {/* Backend Connectivity (Server Component — URL never reaches client bundle) */}
+          <BackendStatus />
         </div>
 
         {/* 3 Distinct Experience Pillars (PRD §5) */}
