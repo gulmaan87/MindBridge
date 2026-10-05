@@ -28,8 +28,12 @@ engine_kwargs: dict[str, Any] = {
     "pool_recycle": 3600,
 }
 
+from sqlalchemy.pool import NullPool
+
 # Only configure pool size / overflow if using a pooled connection (not NullPool/SQLite in tests)
-if not settings.database_url.startswith("sqlite"):
+if settings.app_env.lower() in ("test", "testing"):
+    engine_kwargs["poolclass"] = NullPool
+elif not settings.database_url.startswith("sqlite"):
     engine_kwargs.update(
         {
             "pool_size": 10,

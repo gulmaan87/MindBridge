@@ -4,6 +4,10 @@ Provides async database session fixtures with automatic rollback isolation
 for fast, non-polluting persistence tests.
 """
 
+import os
+
+os.environ["APP_ENV"] = "test"
+
 from collections.abc import AsyncGenerator
 
 import pytest_asyncio
