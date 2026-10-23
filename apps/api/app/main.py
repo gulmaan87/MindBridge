@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Callable
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -60,6 +61,28 @@ async def correlation_id_middleware(request: Request, call_next: Callable) -> Re
 # ------------------------------------------------------------------------------
 # Standard Error Envelope Handler (API Contract v2 §6)
 # ------------------------------------------------------------------------------
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Wrap Pydantic validation errors in the standard error envelope (API Contract v2 §6)."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    details = [
+        {"field": " -> ".join(str(loc) for loc in err["loc"]), "message": err["msg"]}
+        for err in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "Request validation failed.",
+                "request_id": request_id,
+                "details": details,
+            }
+        },
+        headers={"X-Request-ID": request_id},
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch unhandled exceptions and return safe standard error envelope."""

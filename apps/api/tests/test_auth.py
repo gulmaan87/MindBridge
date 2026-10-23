@@ -11,12 +11,21 @@ Tests:
 8. Password hashing utilities enforce bcrypt standards.
 """
 
+import uuid
+
 from fastapi.testclient import TestClient
 
 from app.core.security import hash_password, verify_password
 from app.main import app
 
 client = TestClient(app)
+
+# Per-run unique suffix prevents email clashes on a shared persistent DB
+_RUN_ID = uuid.uuid4().hex[:8]
+
+
+def _e(name: str) -> str:
+    return f"{name}_{_RUN_ID}@example.com"
 
 
 def test_password_hashing_and_verification():
@@ -33,7 +42,7 @@ def test_password_hashing_and_verification():
 def test_register_user_success():
     """Verify registration creates user, profile, role, and returns JWT tokens."""
     payload = {
-        "email": "elder_john@example.com",
+        "email": _e("elder_john"),
         "password": "SecurePassword123!",
         "display_name": "John Doe",
         "profile_type": "ELDER",
@@ -43,7 +52,7 @@ def test_register_user_success():
     data = response.json()
 
     assert "user" in data
-    assert data["user"]["email"] == "elder_john@example.com"
+    assert data["user"]["email"].startswith("elder_john_")
     assert data["user"]["status"] == "ACTIVE"
     assert "access_token" in data
     assert "refresh_token" in data
@@ -54,7 +63,7 @@ def test_register_user_success():
 def test_register_duplicate_email_conflict():
     """Verify registering an already registered email returns HTTP 409."""
     payload = {
-        "email": "duplicate_user@example.com",
+        "email": _e("duplicate_user"),
         "password": "SecurePassword123!",
         "display_name": "Duplicate Test",
         "profile_type": "CAREGIVER",
@@ -71,7 +80,7 @@ def test_register_duplicate_email_conflict():
 
 def test_login_success_and_last_login_updated():
     """Verify login authenticates valid user and returns tokens."""
-    email = "login_test@example.com"
+    email = _e("login_test")
     password = "MyStrongPassword2026!"
 
     # Register first
@@ -112,7 +121,7 @@ def test_refresh_token_flow():
     reg_resp = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "refresh_flow@example.com",
+            "email": _e("refresh_flow"),
             "password": "RefreshPassword123!",
             "display_name": "Refresh User",
             "profile_type": "CAREGIVER",
@@ -137,7 +146,7 @@ def test_get_current_user_me():
     reg_resp = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "me_test@example.com",
+            "email": _e("me_test"),
             "password": "MePassword123!",
             "display_name": "Me User",
             "profile_type": "ELDER",
@@ -152,7 +161,7 @@ def test_get_current_user_me():
     )
     assert me_resp.status_code == 200
     me_data = me_resp.json()
-    assert me_data["email"] == "me_test@example.com"
+    assert me_data["email"].startswith("me_test_")
     assert "ELDER" in me_data["roles"]
     assert len(me_data["profiles"]) == 1
     assert me_data["profiles"][0]["display_name"] == "Me User"

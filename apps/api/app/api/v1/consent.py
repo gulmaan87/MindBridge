@@ -116,7 +116,7 @@ async def get_consent(
     return ConsentRead.model_validate(record)
 
 
-@router.patch(
+@router.post(
     "/{consent_id}/revoke",
     response_model=ConsentRead,
     summary="Revoke an active consent record",

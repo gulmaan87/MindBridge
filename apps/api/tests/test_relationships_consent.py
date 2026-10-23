@@ -6,9 +6,10 @@ Tests:
   2. Reject self-relationship
   3. Subject approves relationship (PENDING → ACTIVE)
   4. Related user cannot approve (must be subject)
-  5. Cannot re-approve (invalid state transition)
+  5. State transition 409 (contract §16)
   6. Subject revokes active relationship (ACTIVE → REVOKED)
   7. Subject manages permissions on active relationship
+  8. Bulk PUT permissions replaces permission set
   8. Non-subject cannot manage permissions
   9. List relationships shows both participants
  Consent:
@@ -18,6 +19,11 @@ Tests:
   13. Get single consent (ownership enforced)
   14. Revoke consent stamps revoked_at and flips granted=False
   15. Re-revoking returns 409
+ Profile (Day 7):
+  16. GET /users/me returns identity
+  17. GET /profiles/me returns profile
+  18. PATCH /profiles/me updates display_name
+  19. Validation error uses standard envelope
 """
 
 import uuid
@@ -29,18 +35,26 @@ from app.main import app
 
 client = TestClient(app)
 
+# Unique suffix per test run — prevents email clashes across runs on a shared DB
+_RUN_ID = uuid.uuid4().hex[:8]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _register_and_login(email: str, display_name: str, profile_type: str = "ELDER") -> str:
+def _email(name: str) -> str:
+    """Generate a unique email per test run to avoid cross-run DB clashes."""
+    return f"{name}_{_RUN_ID}@test.com"
+
+
+def _register_and_login(name: str, display_name: str, profile_type: str = "ELDER") -> str:
     """Register a user and return their access token."""
     resp = client.post(
         "/api/v1/auth/register",
         json={
-            "email": email,
+            "email": _email(name),
             "password": "TestPassword123!",
             "display_name": display_name,
             "profile_type": profile_type,
@@ -64,8 +78,8 @@ class TestRelationships:
 
     def test_create_relationship_pending(self):
         """Creating a relationship starts in PENDING status."""
-        token_subject = _register_and_login("rel_subject1@test.com", "Subject One", "ELDER")
-        token_related = _register_and_login("rel_related1@test.com", "Related One", "CAREGIVER")
+        token_subject = _register_and_login("rel_subject1", "Subject One", "ELDER")
+        token_related = _register_and_login("rel_related1", "Related One", "CAREGIVER")
 
         # Get related user's ID via /auth/me
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
@@ -83,7 +97,7 @@ class TestRelationships:
 
     def test_self_relationship_rejected(self):
         """Cannot create a relationship with oneself."""
-        token = _register_and_login("rel_self@test.com", "Self User", "ELDER")
+        token = _register_and_login("rel_self", "Self User", "ELDER")
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token))
         own_id = me_resp.json()["id"]
 
@@ -92,12 +106,12 @@ class TestRelationships:
             json={"related_user_id": own_id, "relationship_type": "CAREGIVER"},
             headers=_auth(token),
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 422  # self-relationship uses 422 (Pydantic guard)
 
     def test_subject_approves_relationship(self):
         """Subject can transition PENDING → ACTIVE."""
-        token_subject = _register_and_login("rel_subj_approve@test.com", "Approve Subject", "ELDER")
-        token_related = _register_and_login("rel_rel_approve@test.com", "Approve Related", "CAREGIVER")
+        token_subject = _register_and_login("rel_subj_approve", "Approve Subject", "ELDER")
+        token_related = _register_and_login("rel_rel_approve", "Approve Related", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -120,8 +134,8 @@ class TestRelationships:
 
     def test_related_user_cannot_approve(self):
         """Related user cannot approve their own request (only subject can)."""
-        token_subject = _register_and_login("rel_subj_cantappr@test.com", "Subj CantAppr", "ELDER")
-        token_related = _register_and_login("rel_rel_cantappr@test.com", "Rel CantAppr", "CAREGIVER")
+        token_subject = _register_and_login("rel_subj_cantappr", "Subj CantAppr", "ELDER")
+        token_related = _register_and_login("rel_rel_cantappr", "Rel CantAppr", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -143,8 +157,8 @@ class TestRelationships:
 
     def test_invalid_state_transition(self):
         """ACTIVE → PENDING is not a valid transition."""
-        token_subject = _register_and_login("rel_invalid_trans@test.com", "Invalid Trans", "ELDER")
-        token_related = _register_and_login("rel_rel_invalid@test.com", "Rel Invalid", "CAREGIVER")
+        token_subject = _register_and_login("rel_invalid_trans", "Invalid Trans", "ELDER")
+        token_related = _register_and_login("rel_rel_invalid", "Rel Invalid", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -169,12 +183,12 @@ class TestRelationships:
             json={"status": "PENDING"},
             headers=_auth(token_subject),
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 409  # invalid state transition now returns 409 per contract §16
 
     def test_subject_revokes_active_relationship(self):
         """Subject can revoke an ACTIVE relationship."""
-        token_subject = _register_and_login("rel_revoke_s@test.com", "Revoke Subject", "ELDER")
-        token_related = _register_and_login("rel_revoke_r@test.com", "Revoke Related", "CAREGIVER")
+        token_subject = _register_and_login("rel_revoke_s", "Revoke Subject", "ELDER")
+        token_related = _register_and_login("rel_revoke_r", "Revoke Related", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -202,8 +216,8 @@ class TestRelationships:
 
     def test_permission_management_by_subject(self):
         """Subject can grant and delete permissions on ACTIVE relationships."""
-        token_subject = _register_and_login("rel_perm_s@test.com", "Perm Subject", "ELDER")
-        token_related = _register_and_login("rel_perm_r@test.com", "Perm Related", "CAREGIVER")
+        token_subject = _register_and_login("rel_perm_s", "Perm Subject", "ELDER")
+        token_related = _register_and_login("rel_perm_r", "Perm Related", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -250,8 +264,8 @@ class TestRelationships:
 
     def test_non_subject_cannot_manage_permissions(self):
         """Related user cannot manage permissions — only the subject can."""
-        token_subject = _register_and_login("rel_nperm_s@test.com", "NPerm Subject", "ELDER")
-        token_related = _register_and_login("rel_nperm_r@test.com", "NPerm Related", "CAREGIVER")
+        token_subject = _register_and_login("rel_nperm_s", "NPerm Subject", "ELDER")
+        token_related = _register_and_login("rel_nperm_r", "NPerm Related", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -279,8 +293,8 @@ class TestRelationships:
 
     def test_list_relationships_includes_both_sides(self):
         """Both participants can see the shared relationship in their list."""
-        token_subject = _register_and_login("rel_list_s@test.com", "List Subject", "ELDER")
-        token_related = _register_and_login("rel_list_r@test.com", "List Related", "CAREGIVER")
+        token_subject = _register_and_login("rel_list_s", "List Subject", "ELDER")
+        token_related = _register_and_login("rel_list_r", "List Related", "CAREGIVER")
 
         me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
         related_id = me_resp.json()["id"]
@@ -313,7 +327,7 @@ class TestConsent:
 
     def test_create_consent(self):
         """Recording a new consent returns HTTP 201 with correct fields."""
-        token = _register_and_login("consent_create@test.com", "Consent Creator", "ELDER")
+        token = _register_and_login("consent_create", "Consent Creator", "ELDER")
 
         resp = client.post(
             "/api/v1/consents",
@@ -328,7 +342,7 @@ class TestConsent:
 
     def test_duplicate_active_consent_returns_409(self):
         """Creating the same active consent type+version twice returns 409."""
-        token = _register_and_login("consent_dup@test.com", "Consent Dup", "ELDER")
+        token = _register_and_login("consent_dup", "Consent Dup", "ELDER")
 
         payload = {"consent_type": "MEMORY_STORAGE", "version": "1.0", "granted": True}
         resp1 = client.post("/api/v1/consents", json=payload, headers=_auth(token))
@@ -339,7 +353,7 @@ class TestConsent:
 
     def test_list_consents(self):
         """List endpoint returns all consent records for the authenticated user."""
-        token = _register_and_login("consent_list@test.com", "Consent Lister", "ELDER")
+        token = _register_and_login("consent_list", "Consent Lister", "ELDER")
 
         for consent_type in ["DATA_PROCESSING", "VOICE_PROCESSING"]:
             client.post(
@@ -356,8 +370,8 @@ class TestConsent:
 
     def test_get_consent_ownership_enforced(self):
         """A user cannot read another user's consent record."""
-        token_a = _register_and_login("consent_owner_a@test.com", "Owner A", "ELDER")
-        token_b = _register_and_login("consent_owner_b@test.com", "Owner B", "CAREGIVER")
+        token_a = _register_and_login("consent_owner_a", "Owner A", "ELDER")
+        token_b = _register_and_login("consent_owner_b", "Owner B", "CAREGIVER")
 
         resp = client.post(
             "/api/v1/consents",
@@ -372,7 +386,7 @@ class TestConsent:
 
     def test_revoke_consent(self):
         """Revoking a consent stamps revoked_at and flips granted to False."""
-        token = _register_and_login("consent_revoke@test.com", "Consent Revoker", "ELDER")
+        token = _register_and_login("consent_revoke", "Consent Revoker", "ELDER")
 
         create_resp = client.post(
             "/api/v1/consents",
@@ -381,7 +395,7 @@ class TestConsent:
         )
         consent_id = create_resp.json()["id"]
 
-        revoke_resp = client.patch(
+        revoke_resp = client.post(
             f"/api/v1/consents/{consent_id}/revoke",
             json={},
             headers=_auth(token),
@@ -393,7 +407,7 @@ class TestConsent:
 
     def test_double_revoke_returns_409(self):
         """Revoking an already-revoked consent returns 409."""
-        token = _register_and_login("consent_dblrevoke@test.com", "Dbl Revoker", "ELDER")
+        token = _register_and_login("consent_dblrevoke", "Dbl Revoker", "ELDER")
 
         create_resp = client.post(
             "/api/v1/consents",
@@ -402,8 +416,135 @@ class TestConsent:
         )
         consent_id = create_resp.json()["id"]
 
-        client.patch(f"/api/v1/consents/{consent_id}/revoke", json={}, headers=_auth(token))
+        client.post(f"/api/v1/consents/{consent_id}/revoke", json={}, headers=_auth(token))
 
         # Second revoke
-        resp2 = client.patch(f"/api/v1/consents/{consent_id}/revoke", json={}, headers=_auth(token))
+        resp2 = client.post(f"/api/v1/consents/{consent_id}/revoke", json={}, headers=_auth(token))
         assert resp2.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Day 7 — Profile & /users/me tests
+# ---------------------------------------------------------------------------
+
+
+class TestProfiles:
+    """Integration tests for /api/v1/users/me and /api/v1/profiles/me."""
+
+    def test_get_users_me_returns_identity(self):
+        """GET /users/me returns id, roles, profiles (canonical contract path §11)."""
+        token = _register_and_login("prof_usersme", "Users Me", "ELDER")
+
+        resp = client.get("/api/v1/users/me", headers=_auth(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "id" in data
+        assert "ELDER" in data["roles"]
+        assert len(data["profiles"]) == 1
+
+    def test_get_profiles_me(self):
+        """GET /profiles/me returns the primary profile (§14)."""
+        token = _register_and_login("prof_getme", "Profile Me", "CAREGIVER")
+
+        resp = client.get("/api/v1/profiles/me", headers=_auth(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["profile_type"] == "CAREGIVER"
+        assert data["display_name"] == "Profile Me"
+        assert data["timezone"] == "UTC"
+        assert data["language"] == "en"
+
+    def test_patch_profiles_me_updates_fields(self):
+        """PATCH /profiles/me updates only supplied fields (§14 partial update)."""
+        token = _register_and_login("prof_patch", "Patch Me", "ELDER")
+
+        patch_resp = client.patch(
+            "/api/v1/profiles/me",
+            json={"display_name": "Updated Name", "timezone": "Asia/Kolkata"},
+            headers=_auth(token),
+        )
+        assert patch_resp.status_code == 200
+        data = patch_resp.json()
+        assert data["display_name"] == "Updated Name"
+        assert data["timezone"] == "Asia/Kolkata"
+        # language must be unchanged
+        assert data["language"] == "en"
+
+    def test_patch_profiles_me_accessibility_config(self):
+        """PATCH /profiles/me stores accessibility_config JSONB."""
+        token = _register_and_login("prof_a11y", "A11y User", "ELDER")
+
+        patch_resp = client.patch(
+            "/api/v1/profiles/me",
+            json={"accessibility_config": {"font_scale": 1.5, "high_contrast": True}},
+            headers=_auth(token),
+        )
+        assert patch_resp.status_code == 200
+        cfg = patch_resp.json()["accessibility_config"]
+        assert cfg["font_scale"] == 1.5
+        assert cfg["high_contrast"] is True
+
+    def test_validation_error_uses_standard_envelope(self):
+        """422 validation errors must use the project error envelope (§6)."""
+        resp = client.post(
+            "/api/v1/auth/register",
+            json={"email": "not-an-email", "password": "x"},  # invalid email + too short pwd
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert "error" in body
+        assert body["error"]["code"] == "VALIDATION_ERROR"
+        assert "details" in body["error"]
+        assert isinstance(body["error"]["details"], list)
+
+
+class TestBulkPermissions:
+    """Integration tests for PUT /relationships/{id}/permissions (§17)."""
+
+    def test_bulk_put_replaces_all_permissions(self):
+        """PUT replaces the entire permission set atomically."""
+        token_subject = _register_and_login("bulk_subj", "Bulk Subject", "ELDER")
+        token_related = _register_and_login("bulk_rel", "Bulk Related", "CAREGIVER")
+
+        me_resp = client.get("/api/v1/auth/me", headers=_auth(token_related))
+        related_id = me_resp.json()["id"]
+
+        # Create and activate relationship
+        create_resp = client.post(
+            "/api/v1/relationships",
+            json={"related_user_id": related_id, "relationship_type": "CAREGIVER"},
+            headers=_auth(token_subject),
+        )
+        rel_id = create_resp.json()["id"]
+        client.patch(
+            f"/api/v1/relationships/{rel_id}/status",
+            json={"status": "ACTIVE"},
+            headers=_auth(token_subject),
+        )
+
+        # PUT with two permissions
+        put_resp = client.put(
+            f"/api/v1/relationships/{rel_id}/permissions",
+            json={"permissions": [
+                {"permission": "VIEW_PROGRESS", "granted": True},
+                {"permission": "VIEW_SESSIONS", "granted": True},
+            ]},
+            headers=_auth(token_subject),
+        )
+        assert put_resp.status_code == 200
+        returned = {p["permission"] for p in put_resp.json()}
+        assert returned == {"VIEW_PROGRESS", "VIEW_SESSIONS"}
+
+        # PUT with a different set — should replace, not append
+        put_resp2 = client.put(
+            f"/api/v1/relationships/{rel_id}/permissions",
+            json={"permissions": [
+                {"permission": "VIEW_MEMORIES", "granted": True},
+            ]},
+            headers=_auth(token_subject),
+        )
+        assert put_resp2.status_code == 200
+        returned2 = {p["permission"] for p in put_resp2.json()}
+        assert returned2 == {"VIEW_MEMORIES"}
+        assert "VIEW_PROGRESS" not in returned2  # old perms removed
+

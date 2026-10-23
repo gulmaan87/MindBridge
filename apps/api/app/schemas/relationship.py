@@ -71,3 +71,12 @@ class PermissionUpsert(BaseModel):
 
     permission: PermissionType = Field(..., description="Permission token to upsert")
     granted: bool = Field(True, description="True to grant, False to explicitly revoke")
+
+
+class BulkPermissionsUpdate(BaseModel):
+    """Bulk replace all permissions on a relationship (API Contract v2 §17)."""
+
+    permissions: list[PermissionUpsert] = Field(
+        ...,
+        description="Complete set of permissions to apply; replaces all existing entries",
+    )

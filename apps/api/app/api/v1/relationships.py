@@ -5,7 +5,8 @@ Endpoints:
   GET    /relationships                          List relationships for current user
   GET    /relationships/{id}                     Get single relationship (participants only)
   PATCH  /relationships/{id}/status             Transition status (state machine)
-  POST   /relationships/{id}/permissions         Upsert a fine-grained permission
+  POST   /relationships/{id}/permissions         Upsert a single permission
+  PUT    /relationships/{id}/permissions         Bulk replace all permissions (API Contract §17)
   DELETE /relationships/{id}/permissions/{perm}  Remove a permission entry
 
 Authorization rules (Engineering Rules §6):
@@ -33,6 +34,7 @@ from app.models.relationship import (
 )
 from app.models.user import User
 from app.schemas.relationship import (
+    BulkPermissionsUpdate,
     PermissionRead,
     PermissionUpsert,
     RelationshipCreate,
@@ -208,7 +210,7 @@ async def update_relationship_status(
     allowed = _ALLOWED_TRANSITIONS.get(current_status, set())
     if new_status not in allowed:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot transition from '{current_status}' to '{new_status}'.",
         )
 
@@ -293,3 +295,55 @@ async def delete_permission(
 
     await db.delete(perm)
     await db.commit()
+
+
+@router.put(
+    "/{relationship_id}/permissions",
+    response_model=list[PermissionRead],
+    status_code=status.HTTP_200_OK,
+    summary="Bulk replace all permissions on an active relationship (API Contract §17)",
+)
+async def replace_permissions(
+    relationship_id: uuid.UUID,
+    payload: BulkPermissionsUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> list[PermissionRead]:
+    """Atomically replace the full permission set for a relationship.
+
+    Deletes all existing permissions and inserts the provided list in one
+    transaction. Only the *subject_user* may call this endpoint.
+    """
+    rel = await _get_relationship_or_404(relationship_id, db)
+    _assert_subject(rel, current_user)
+
+    if rel.status != RelationshipStatus.ACTIVE.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Permissions can only be managed on ACTIVE relationships.",
+        )
+
+    # Delete all existing permissions atomically
+    existing_stmt = select(RelationshipPermission).where(
+        RelationshipPermission.relationship_id == relationship_id
+    )
+    existing = (await db.execute(existing_stmt)).scalars().all()
+    for p in existing:
+        await db.delete(p)
+
+    # Insert the new permission set
+    new_perms: list[RelationshipPermission] = []
+    for item in payload.permissions:
+        new_perm = RelationshipPermission(
+            relationship_id=relationship_id,
+            permission=item.permission.value,
+            granted=item.granted,
+        )
+        db.add(new_perm)
+        new_perms.append(new_perm)
+
+    await db.commit()
+    for p in new_perms:
+        await db.refresh(p)
+
+    return [PermissionRead.model_validate(p) for p in new_perms]
