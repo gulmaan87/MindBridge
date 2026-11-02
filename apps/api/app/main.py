@@ -4,6 +4,7 @@ Configures middlewares (CORS, Request-ID), lifespan management,
 error handling, and router registration adhering to API Contract v2.
 """
 
+import re
 import uuid
 from collections.abc import Callable
 
@@ -33,23 +34,70 @@ app = FastAPI(
 # Middlewares
 # ------------------------------------------------------------------------------
 
-# 1. CORS Middleware (restricted to approved frontend origins)
+# 1. CORS Middleware (restricted to approved frontend origins and headers)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID", "Idempotency-Key", "If-Match"],
     expose_headers=["X-Request-ID"],
 )
 
+# Safe pattern for incoming correlation IDs: alphanumeric, underscores, hyphens (max 64 chars)
+_SAFE_REQUEST_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+_MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024  # 2 MB limit for standard JSON payloads
 
-# 2. Correlation ID Middleware (API Contract v2 §5)
+
+# 2. Security Headers Middleware (OWASP Secure Headers & Engineering Rules §10)
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next: Callable) -> Response:
+    """Enforce strict defensive security headers on all API responses."""
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if not settings.debug:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+# 3. Request Payload Size Limiting Middleware (DoS Protection - Engineering Rules §5)
+@app.middleware("http")
+async def request_size_limit_middleware(request: Request, call_next: Callable) -> Response:
+    """Prevent memory exhaustion / denial of service by rejecting oversized bodies."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > _MAX_REQUEST_BODY_BYTES:
+                request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "error": {
+                            "code": "PAYLOAD_TOO_LARGE",
+                            "message": f"Request body exceeds maximum allowed size of {_MAX_REQUEST_BODY_BYTES} bytes.",
+                            "request_id": request_id,
+                            "details": [],
+                        }
+                    },
+                    headers={"X-Request-ID": request_id},
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
+# 4. Correlation ID Middleware with Malformed Input Sanitization (API Contract v2 §5, Engineering Rules §5)
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next: Callable) -> Response:
-    """Ensure every request has a correlation ID for end-to-end traceability."""
-    request_id = request.headers.get("X-Request-ID")
-    if not request_id:
+    """Validate or replace correlation IDs to prevent header injection and malformed logs."""
+    raw_id = request.headers.get("X-Request-ID")
+    if raw_id and _SAFE_REQUEST_ID_REGEX.match(raw_id):
+        request_id = raw_id
+    else:
         request_id = str(uuid.uuid4())
 
     request.state.request_id = request_id

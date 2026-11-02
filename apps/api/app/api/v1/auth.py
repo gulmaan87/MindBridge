@@ -119,6 +119,11 @@ async def register_user(
     )
 
 
+# Precomputed bcrypt hash used for constant-time evaluation when user is not found,
+# preventing account enumeration via timing analysis (Engineering Rules §6).
+_DUMMY_BCRYPT_HASH = "$2b$12$K1V4k/40Zz3dK3zL4Q7n.uVj31k05d21tq8fH.38n2.w1vXvYq8qO"
+
+
 @router.post(
     "/auth/login",
     response_model=AuthResponse,
@@ -134,8 +139,11 @@ async def login_user(
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
-    # Prevent enumeration: verify_password even if user not found (or return constant error)
-    if not user or not verify_password(payload.password, user.password_hash):
+    # Defeat account enumeration timing attacks: always compute bcrypt verification
+    target_hash = user.password_hash if user else _DUMMY_BCRYPT_HASH
+    password_valid = verify_password(payload.password, target_hash)
+
+    if not user or not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",

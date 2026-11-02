@@ -8,7 +8,7 @@ fail-safe defaults and runtime validation without logging secret values.
 import json
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -79,6 +79,25 @@ class Settings(BaseSettings):
         default="text-embedding-3-small", alias="AI_EMBEDDING_MODEL"
     )
     embedding_dimension: int = Field(default=1536, alias="EMBEDDING_DIMENSION")
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self) -> "Settings":
+        """Enforce strict secret hygiene and security constraints in non-dev environments."""
+        if self.app_env in {"production", "staging"}:
+            if (
+                self.jwt_secret_key
+                == "dev_insecure_jwt_secret_change_me_in_production_min_32_bytes"
+                or len(self.jwt_secret_key) < 32
+            ):
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: Production or staging environments "
+                    "MUST configure a high-entropy JWT_SECRET_KEY of at least 32 characters."
+                )
+            if self.debug:
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: DEBUG mode MUST be disabled (False) in production."
+                )
+        return self
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../../.env"),
